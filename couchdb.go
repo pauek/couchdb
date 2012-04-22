@@ -1,19 +1,14 @@
-
 package couchdb
 
 import (
-	"os"
-	"fmt"
-	"log"
-	"time"
 	"bytes"
-	"strings"
-	"reflect"
-	"io/ioutil"
-	"net/http"
 	"encoding/json"
-	"encoding/gob"
+	"fmt"
+	"io/ioutil"
 	"math/rand"
+	"net/http"
+	"strings"
+	"time"
 )
 
 var Url string
@@ -50,8 +45,24 @@ type Database struct {
 	dbname string
 }
 
+func marshal(v interface{}, preamble map[string]string) ([]byte, error) {
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "{")
+	for key, value := range preamble {
+		if value != "" {
+			fmt.Fprintf(&b, `"%s":"%s",`, key, value)
+		}
+	}
+	json, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(&b, "%s", json[1:]) // includes '}'
+	return b.Bytes(), nil
+}
+
 func (D *Database) url(path string) string {
-	return fmt.Sprintf("%s/%s/%s", DbUrl, D.dbname, path)
+	return fmt.Sprintf("%s/%s/%s", Url, D.dbname, path)
 }
 
 func (D *Database) Rev(id string) (rev string, err error) {
@@ -100,14 +111,14 @@ func (D *Database) Get(id string, v interface{}) (rev string, err error) {
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		err = fmt.Errorf("Get: cannot read response body: %s\n", err)
-		return 
+		return
 	}
 	if err = json.Unmarshal(data, v); err != nil {
 		err = fmt.Errorf("Get: json.Unmarshal error: %s\n", err)
-		return 
+		return
 	}
 	rev = resp.Header.Get("Etag")
-	return 
+	return
 }
 
 func (D *Database) Put(id string, v interface{}) error {
@@ -124,15 +135,15 @@ func (D *Database) PutOrUpdate(id string, v interface{}) error {
 		return fmt.Errorf("PutOrUpdate: %s\n", err)
 	}
 	if rev == "" {
-		return D.Put(id, v) 
-	} 
+		return D.Put(id, v)
+	}
 	return D.Update(id, rev, v)
 }
 
 func (D *Database) put(id, rev string, v interface{}) error {
 	// TODO: Detect that 'v' really is db.Obj
-	preamble := map[string]string {
-		"_id": id, 
+	preamble := map[string]string{
+		"_id":  id,
 		"_rev": rev,
 	}
 	json, err := marshal(v, preamble)
@@ -177,7 +188,7 @@ func (D *Database) Delete(id, rev string) error {
 
 func GetDB(dbname string) (db *Database, err error) {
 	db = nil
-	url := fmt.Sprintf("%s/%s/", DbUrl, dbname)
+	url := fmt.Sprintf("%s/%s/", Url, dbname)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		err = fmt.Errorf("Get: cannot create request: %s\n", err)
@@ -200,7 +211,7 @@ func GetDB(dbname string) (db *Database, err error) {
 
 func CreateDB(dbname string) (db *Database, err error) {
 	db = nil
-	url := fmt.Sprintf("%s/%s/", DbUrl, dbname)
+	url := fmt.Sprintf("%s/%s/", Url, dbname)
 	req, err := http.NewRequest("PUT", url, nil)
 	if err != nil {
 		err = fmt.Errorf("Get: cannot create request: %s\n", err)
@@ -245,4 +256,3 @@ func DeleteDB(db *Database) (err error) {
 	}
 	return
 }
-
