@@ -1,6 +1,7 @@
 package couchdb
 
 import (
+	"errors"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -92,6 +93,8 @@ func (D *Database) Rev(id string) (rev string, err error) {
 	return
 }
 
+var NotFound = errors.New("ID not found in database")
+
 func (D *Database) Get(id string, v interface{}) (rev string, err error) {
 	rev = ""
 	req, err := http.NewRequest("GET", D.url(id), nil)
@@ -103,6 +106,9 @@ func (D *Database) Get(id string, v interface{}) (rev string, err error) {
 	switch {
 	case err != nil:
 		err = fmt.Errorf("Get: http.client error: %s\n", err)
+		return
+	case resp.StatusCode == 404:
+		err = NotFound
 		return
 	case resp.StatusCode != 200:
 		err = fmt.Errorf("Get: HTTP status = '%s'\n", resp.Status)
