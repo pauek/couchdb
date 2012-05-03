@@ -127,18 +127,22 @@ func (D *Database) Get(id string, v interface{}) (rev string, err error) {
 	return
 }
 
-func (D *Database) Put(id string, v interface{}) error {
+func (D *Database) PutNew(v interface{}) (string, error) {
+	return D.put(NewUUID(), "", v)
+}
+
+func (D *Database) Put(id string, v interface{}) (string, error) {
 	return D.put(id, "", v)
 }
 
-func (D *Database) Update(id, rev string, v interface{}) error {
+func (D *Database) Update(id, rev string, v interface{}) (string, error) {
 	return D.put(id, rev, v)
 }
 
-func (D *Database) PutOrUpdate(id string, v interface{}) error {
+func (D *Database) PutOrUpdate(id string, v interface{}) (string, error) {
 	rev, err := D.Rev(id)
 	if err != nil {
-		return fmt.Errorf("PutOrUpdate: %s\n", err)
+		return "", fmt.Errorf("PutOrUpdate: %s\n", err)
 	}
 	if rev == "" {
 		return D.Put(id, v)
@@ -146,7 +150,47 @@ func (D *Database) PutOrUpdate(id string, v interface{}) error {
 	return D.Update(id, rev, v)
 }
 
-func (D *Database) put(id, rev string, v interface{}) error {
+type all struct {
+	TotalRows int `json:"total_rows"`
+	Offset int `json:"offset"`
+	Rows []row `json:"rows"`
+}
+
+type row struct {
+	Id string `json:"id"`
+}
+
+func (D *Database) AllIDs() (ids []string, err error) {
+	resp, err := client.Get(D.url("_all_docs"))
+	switch {
+	case err != nil:
+		err = fmt.Errorf("AllIDs: http.client error: %s\n", err)
+		return
+	case resp.StatusCode == 404:
+		err = fmt.Errorf("Internal Error: Database not found")
+		return
+	case resp.StatusCode != 200:
+		err = fmt.Errorf("Rev: HTTP status = '%s'\n", resp.Status)
+		return
+	}
+	defer resp.Body.Close()
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		err = fmt.Errorf("AllIDs: cannot read response body: %s\n", err)
+		return 
+	}
+	var allids all
+	if err = json.Unmarshal(data, &allids); err != nil {
+		err = fmt.Errorf("AllIDs: json.Unmarshal error: %s\n", err)
+		return 
+	}
+	for _, r := range allids.Rows {
+		ids = append(ids, r.Id)
+	}
+	return ids, nil
+}
+
+func (D *Database) put(id, rev string, v interface{}) (string, error) {
 	// TODO: Detect that 'v' really is db.Obj
 	preamble := map[string]string{
 		"_id":  id,
@@ -154,22 +198,23 @@ func (D *Database) put(id, rev string, v interface{}) error {
 	}
 	json, err := marshal(v, preamble)
 	if err != nil {
-		return fmt.Errorf("Put: json.Marshal error: %s\n", err)
+		return "", fmt.Errorf("Put: json.Marshal error: %s\n", err)
 	}
 	b := bytes.NewBuffer(json)
 	req, err := http.NewRequest("PUT", D.url(id), b)
 	if err != nil {
-		return fmt.Errorf("Put: cannot create request: %s\n", err)
+		return "", fmt.Errorf("Put: cannot create request: %s\n", err)
 	}
 	resp, err := client.Do(req)
 	switch {
 	case err != nil:
-		return fmt.Errorf("Put: http.client error: %s\n", err)
+		return "", fmt.Errorf("Put: http.client error: %s\n", err)
 	case resp.StatusCode != 201:
 		// body, _ := ioutil.ReadAll(resp.Body)
-		return fmt.Errorf("Put: HTTP status = '%s'\n", resp.Status)
+		return "", fmt.Errorf("Put: HTTP status = '%s'\n", resp.Status)
 	}
-	return nil
+	rev = strings.Replace(`"`,``, resp.Header.Get("ETag"), -1)
+	return rev, nil
 }
 
 func (D *Database) Delete(id, rev string) error {
@@ -186,6 +231,42 @@ func (D *Database) Delete(id, rev string) error {
 		return nil
 	case resp.StatusCode != 200:
 		return fmt.Errorf("Delete: HTTP status = '%s'\n", resp.Status)
+	}
+	return nil
+}
+
+func (D *Database) GetView(docid, viewname string, v interface{}) (err error) {
+	path := fmt.Sprintf("_design/%s/_view/%s", docid, viewname)
+	req, err := http.NewRequest("GET", D.url(path), nil)
+	if err != nil {
+		return fmt.Errorf("Delete: cannot create request: %s\n", err)
+	}
+	resp, err := client.Do(req)
+	switch {
+	case err != nil:
+		err = fmt.Errorf("Get: http.client error: %s\n", err)
+		return
+	case resp.StatusCode == 404:
+		err = NotFound
+		return
+	case resp.StatusCode != 200:
+		err = fmt.Errorf("Get: HTTP status = '%s'\n", resp.Status)
+		return
+	}
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		err = fmt.Errorf("Get: cannot read response body: %s\n", err)
+		return
+	}
+	var result struct {
+		TotalRows int `json:"total_rows"`
+		Offset int `json:"offset"`
+		Rows interface{} `json:"rows"`
+	}
+	result.Rows = v
+	if err = json.Unmarshal(data, &result); err != nil {
+		err = fmt.Errorf("Get: json.Unmarshal error: %s\n", err)
+		return
 	}
 	return nil
 }
