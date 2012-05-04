@@ -1,9 +1,9 @@
 package couchdb
 
 import (
-	"errors"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -151,9 +151,9 @@ func (D *Database) PutOrUpdate(id string, v interface{}) (string, error) {
 }
 
 type all struct {
-	TotalRows int `json:"total_rows"`
-	Offset int `json:"offset"`
-	Rows []row `json:"rows"`
+	TotalRows int   `json:"total_rows"`
+	Offset    int   `json:"offset"`
+	Rows      []row `json:"rows"`
 }
 
 type row struct {
@@ -177,12 +177,12 @@ func (D *Database) AllIDs() (ids []string, err error) {
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		err = fmt.Errorf("AllIDs: cannot read response body: %s\n", err)
-		return 
+		return
 	}
 	var allids all
 	if err = json.Unmarshal(data, &allids); err != nil {
 		err = fmt.Errorf("AllIDs: json.Unmarshal error: %s\n", err)
-		return 
+		return
 	}
 	for _, r := range allids.Rows {
 		ids = append(ids, r.Id)
@@ -213,7 +213,7 @@ func (D *Database) put(id, rev string, v interface{}) (string, error) {
 		// body, _ := ioutil.ReadAll(resp.Body)
 		return "", fmt.Errorf("Put: HTTP status = '%s'\n", resp.Status)
 	}
-	rev = strings.Replace(`"`,``, resp.Header.Get("ETag"), -1)
+	rev = strings.Replace(`"`, ``, resp.Header.Get("ETag"), -1)
 	return rev, nil
 }
 
@@ -235,12 +235,49 @@ func (D *Database) Delete(id, rev string) error {
 	return nil
 }
 
-func (D *Database) GetView(docid, viewname string, v interface{}) (err error) {
-	path := fmt.Sprintf("_design/%s/_view/%s", docid, viewname)
-	req, err := http.NewRequest("GET", D.url(path), nil)
+type View struct {
+	db       *Database
+	docid    string
+	viewname string
+}
+
+func (D *Database) GetView(docid, viewname string) *View {
+	return &View{
+		db:       D,
+		docid:    docid,
+		viewname: viewname,
+	}
+}
+
+func (V *View) query(start, end, v interface{}) (err error) {
+
+	params := []string{}
+	if start != nil {
+		data, err := json.Marshal(start)
+		if err != nil {
+			return fmt.Errorf("Cannot marshal startkey: %s\n", err)
+		}
+		params = append(params, fmt.Sprintf("startkey=%s", data))
+	}
+	if end != nil {
+		data, err := json.Marshal(end)
+		if err != nil {
+			return fmt.Errorf("Cannot marshal endkey: %s\n", err)
+		}
+		params = append(params, fmt.Sprintf("endkey=%s", data))
+	}
+	sparams := ""
+	if len(params) > 0 {
+		sparams = "?" + strings.Join(params, "&")
+	}
+
+	path := fmt.Sprintf("_design/%s/_view/%s%s", V.docid, V.viewname, sparams)
+	fmt.Printf("Query URL: %s", path)
+	req, err := http.NewRequest("GET", V.db.url(path), nil)
 	if err != nil {
 		return fmt.Errorf("Delete: cannot create request: %s\n", err)
 	}
+
 	resp, err := client.Do(req)
 	switch {
 	case err != nil:
@@ -253,15 +290,16 @@ func (D *Database) GetView(docid, viewname string, v interface{}) (err error) {
 		err = fmt.Errorf("Get: HTTP status = '%s'\n", resp.Status)
 		return
 	}
+
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		err = fmt.Errorf("Get: cannot read response body: %s\n", err)
 		return
 	}
 	var result struct {
-		TotalRows int `json:"total_rows"`
-		Offset int `json:"offset"`
-		Rows interface{} `json:"rows"`
+		TotalRows int         `json:"total_rows"`
+		Offset    int         `json:"offset"`
+		Rows      interface{} `json:"rows"`
 	}
 	result.Rows = v
 	if err = json.Unmarshal(data, &result); err != nil {
@@ -269,6 +307,14 @@ func (D *Database) GetView(docid, viewname string, v interface{}) (err error) {
 		return
 	}
 	return nil
+}
+
+func (V *View) All(result interface{}) error {
+	return V.query(nil, nil, result)
+}
+
+func (V *View) Range(start, end, result interface{}) error {
+	return V.query(start, end, result)
 }
 
 // Database Functions
