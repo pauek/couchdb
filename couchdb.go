@@ -62,6 +62,8 @@ func marshal(v interface{}, preamble map[string]string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+func (D *Database) Name() string { return D.dbname }
+
 func (D *Database) url(path string) string {
 	return fmt.Sprintf("%s/%s/%s", Url, D.dbname, path)
 }
